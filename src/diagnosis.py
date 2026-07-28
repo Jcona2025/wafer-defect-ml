@@ -11,7 +11,7 @@ ROOT_CAUSES = {
     },
     "Center": {
         "direction": "Center-of-wafer non-uniformity",
-        "first_checks": "Dispense/spin steps, center-to-edge etch rate delta, showerhead condition",
+        "first_checks": "Dispense/spin steps, center-to-edge etch rate delta, showerplate condition, quartz condition",
     },
     "Donut": {
         "direction": "Radial process non-uniformity",
