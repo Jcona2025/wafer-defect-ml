@@ -244,9 +244,10 @@ function renderSingle(w) {
     `wafer #${w.idx.toLocaleString()} · true label: ${w.true_label} · fail rate ${(w.fail_rate*100).toFixed(1)}%`;
   const d = decision(w);
   const rc = META.root_causes[w.pred];
+  const cut = Math.round(threshold * 100);
   const banner = d === "review"
-    ? `<div class="banner review"><b>${w.pred}?</b> — only ${(w.conf*100).toFixed(1)}% confident, sent to engineer review</div>`
-    : `<div class="banner auto"><b>${w.pred}</b> — ${(w.conf*100).toFixed(1)}% confident, auto-tagged for SPC trending</div>`;
+    ? `<div class="banner review"><b>${w.pred}?</b> — only ${(w.conf*100).toFixed(1)}% confident, below the ${cut}% cutoff: sent to engineer review</div>`
+    : `<div class="banner auto"><b>${w.pred}</b> — ${(w.conf*100).toFixed(1)}% confident, above the ${cut}% cutoff: auto-tagged for SPC trending</div>`;
   const firstChecks = isElevatedRandom(w)
     ? `<span style="color:var(--warn)">High defectivity but no spatial pattern. This usually isn't one tool.</span>
        Check if the rest of the lot looks the same, pull the inline particle data, and look at upstream steps that touch the whole wafer.`
