@@ -1,6 +1,8 @@
 .venv/
-data/
+data/*
+!data/demo_sample.npz
 models/*.pt
+!models/wafer_cnn.pt
 __pycache__/
 *.pyc
 .ipynb_checkpoints/

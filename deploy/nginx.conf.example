@@ -1,0 +1,25 @@
+# Streamlit needs websocket upgrade headers. Two options:
+
+# Option A — subdomain (wafer.baselinetech.ie), cleanest:
+#   server block for wafer.baselinetech.ie with:
+#
+#   location / {
+#       proxy_pass http://127.0.0.1:8501;
+#       proxy_http_version 1.1;
+#       proxy_set_header Upgrade $http_upgrade;
+#       proxy_set_header Connection "upgrade";
+#       proxy_set_header Host $host;
+#       proxy_read_timeout 86400;
+#   }
+
+# Option B — subpath (baselinetech.ie/wafer), enable baseUrlPath in
+# docker-compose.yml first, then add to the existing server block:
+#
+#   location /wafer/ {
+#       proxy_pass http://127.0.0.1:8501/wafer/;
+#       proxy_http_version 1.1;
+#       proxy_set_header Upgrade $http_upgrade;
+#       proxy_set_header Connection "upgrade";
+#       proxy_set_header Host $host;
+#       proxy_read_timeout 86400;
+#   }

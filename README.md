@@ -1,70 +1,63 @@
-# Wafer Map Defect Pattern Classification (WM-811K)
+# Wafer Map Triage
 
-Machine-learning pipeline that classifies spatial defect signatures on semiconductor
-wafer maps — the patterns (edge rings, scratches, center clusters, …) that point a
-defect engineer toward a specific tool or process step during excursion response.
+An ML tool that reads wafer maps, names the failure signature, and points at a
+root-cause direction — the call a defect engineer makes by eye, automated on
+every wafer.
 
-Built on the public **WM-811K / LSWMD** dataset: 811,457 real wafer maps from
-46,293 production lots, ~172k of them labeled with one of 9 failure classes
-(Center, Donut, Edge-Loc, Edge-Ring, Loc, Near-full, Random, Scratch, none).
+![Lot triage view](reports/figures/app_lot.png)
 
-## Why this problem
+## Run it
 
-In a fab, the *spatial distribution* of failing die is a fingerprint of the root
-cause: an edge ring implicates edge-exclusion / chamber uniformity, a scratch
-implicates wafer handling, a repeating cluster implicates a reticle or chuck.
-Classifying these signatures automatically shortens time-to-root-cause during
-excursions and removes a manual, subjective review step. This project mirrors
-that task end-to-end on public data: heavy class imbalance, mostly-unlabeled
-maps, and variable wafer geometries — the same properties real fab data has.
+```bash
+docker compose -f deploy/docker-compose.yml up -d   # then open :8501
+```
 
-## Approach
+or locally: `pip install -r requirements-app.txt && streamlit run app.py`
+(a demo dataset and trained model ship in the repo — no setup needed).
 
-1. **EDA** — label distribution, wafer geometry survey, per-class signature gallery
-   (`notebooks/01_eda.ipynb`)
-2. **Classical baseline** — density / geometry / radon-projection features into a
-   gradient-boosted classifier (`notebooks/02_baseline.ipynb`)
-3. **CNN** — small convolutional network on normalized 64×64 wafer maps, trained
-   with class-balanced sampling (`notebooks/03_cnn.ipynb`)
-4. **Evaluation** — per-class precision/recall and confusion analysis, with
-   discussion of which confusions matter in a fab context and which don't
+Three views: **Single wafer** (classify + diagnose one map), **Lot triage**
+(25 wafers in one pass — auto-clear clean, flag signatures, queue ambiguous ones
+for review), **Cluster view** (CNN embedding of wafer maps — similar failures
+group together; novel signatures appear as new clusters).
+
+## Data
+
+**WM-811K**: 811,457 wafer maps from 46,293 production lots of a real fab
+(Wu, Jang & Chen, IEEE Trans. Semiconductor Manufacturing, 2015 —
+[download](http://mirlab.org/dataSet/public/)). Each map is a die grid of
+0 = outside wafer / 1 = pass / 2 = fail. 172,950 maps carry an engineer-assigned
+label across 9 signature classes; 85% of those are "none" — the same imbalance
+production data has.
+
+## ML
+
+Maps are resampled to 64×64 and one-hot encoded (outside/pass/fail). Two models,
+compared deliberately:
+
+- **Baseline** — 18 engineered features (radial ring densities, projection
+  statistics, region geometry) + gradient boosting. Interpretable in fab language.
+- **CNN** — 3 conv blocks, 289k parameters, trained with class-balanced sampling
+  so rare signatures aren't drowned out by the 85% clean majority.
 
 ## Results
 
-Test-set performance (9 classes, macro-averaged):
+Held-out test set, 34,590 wafers at true production class mix:
 
-| Model | Test mix | Macro F1 | "none" F1 | Notes |
-|---|---|---|---|---|
-| Engineered features + HistGradientBoosting | "none" capped at 20k | 0.84 | 0.946 | Strong on geometric signatures (Edge-Ring 0.96 F1) |
-| Small CNN (~300k params, class-balanced sampling) | Full production mix (85% "none") | 0.83 | 0.987 | Near-eliminates false alarms at realistic class ratios |
+| | Baseline | CNN |
+|---|---|---|
+| Macro F1 (9 classes) | 0.84¹ | **0.83** |
+| Clean-wafer precision ("none") | 0.973 | **0.989** |
+| Edge-Ring F1 | 0.960 | **0.972** |
+| Scratch precision | 0.509 | **0.743** |
 
-Headline finding: at production class ratios the CNN's value is **false-alarm
-suppression** (0.989 precision on clean wafers) rather than raw accuracy —
-the property that decides whether an auto-classifier saves reviewer time or
-buries engineers in noise. Full analysis in `notebooks/03_cnn.ipynb`.
+¹ baseline tested with the clean class capped; the CNN faces the full 85%-clean mix.
 
-## Repo layout
+The number that decides usefulness is **clean-wafer precision**: at production
+ratios, the CNN false-flags fewer than 1 in 90 clean wafers — the difference
+between an alarm engineers trust and one they mute. Weakest classes for both
+models are small diffuse clusters (Loc) and faint scratches — genuinely ambiguous
+at map resolution; the tool routes low-confidence wafers to human review instead
+of guessing.
 
-```
-src/            reusable pipeline code (data loading, features, models, training)
-notebooks/      narrative analysis — start with 01_eda.ipynb
-reports/        exported figures
-data/           dataset (not committed — see below)
-```
-
-## Reproducing
-
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-# Dataset: http://mirlab.org/dataSet/public/MIR-WM811K.zip  (~330 MB)
-# Unzip so that data/raw/MIR-WM811K/ exists, then:
-python -m src.prepare_data
-jupyter lab
-```
-
-## Dataset citation
-
-Wu, M.-J., Jang, J.-S. R., & Chen, J.-L. (2015). *Wafer Map Failure Pattern
-Recognition and Similarity Ranking for Large-Scale Data Sets.* IEEE Transactions
-on Semiconductor Manufacturing, 28(1), 1–12.
+Full analysis: `notebooks/00_technical_summary.ipynb` (condensed, executed) and
+`01`–`03` (EDA → baseline → CNN).
