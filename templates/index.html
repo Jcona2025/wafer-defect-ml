@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wafer Map Triage</title>
+<style>
+  :root {
+    --bg: #0e1318; --panel: #161d24; --panel-2: #1b242e; --line: #253040;
+    --ink: #e3ebf2; --muted: #8698a8; --accent: #35c3d6;
+    --pass: #3a76b5; --fail: #e5544b; --empty: #1c242d;
+    --good: #46b26b; --warn: #d9a13c;
+    --mono: "Consolas", "SF Mono", "Cascadia Code", monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px 60px; }
+
+  header { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; flex-wrap: wrap; }
+  h1 { margin: 0; font-size: 21px; font-weight: 650; letter-spacing: 0.02em; }
+  h1 .dot { color: var(--accent); }
+  .sub { color: var(--muted); font-size: 13.5px; margin-top: 4px; max-width: 62ch; }
+  .threshold { text-align: right; font-size: 12.5px; color: var(--muted); }
+  .threshold b { color: var(--ink); font-family: var(--mono); }
+  .threshold input { width: 150px; accent-color: var(--accent); display: block; margin-top: 4px; }
+
+  nav { display: flex; gap: 4px; margin: 22px 0 18px; border-bottom: 1px solid var(--line); }
+  nav button {
+    background: none; border: none; color: var(--muted); font: 600 13.5px/1 inherit;
+    padding: 10px 14px; cursor: pointer; border-bottom: 2px solid transparent;
+  }
+  nav button.active { color: var(--ink); border-bottom-color: var(--accent); }
+  nav button:hover { color: var(--ink); }
+
+  .tab { display: none; }
+  .tab.active { display: block; }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 18px; }
+  .row { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+  .grow { flex: 1; min-width: 300px; }
+
+  button.primary {
+    background: var(--accent); color: #06222a; border: none; border-radius: 6px;
+    font: 600 13.5px/1 inherit; padding: 10px 16px; cursor: pointer;
+  }
+  button.primary:hover { filter: brightness(1.1); }
+  button.primary:disabled { opacity: 0.5; cursor: wait; }
+  select {
+    background: var(--panel-2); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 6px; padding: 9px 10px; font: inherit; font-size: 13px;
+  }
+
+  .wafer-canvas { image-rendering: pixelated; border-radius: 6px; background: var(--empty); }
+  .caption { color: var(--muted); font-size: 12.5px; margin-top: 8px; font-family: var(--mono); }
+
+  .banner { border-radius: 6px; padding: 12px 14px; font-size: 14px; margin-bottom: 14px; border: 1px solid; }
+  .banner.auto { border-color: var(--good); color: var(--good); background: rgba(70,178,107,0.08); }
+  .banner.review { border-color: var(--warn); color: var(--warn); background: rgba(217,161,60,0.08); }
+  .banner b { font-size: 16px; }
+  .kv { margin: 10px 0; font-size: 14px; }
+  .kv .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; display: block; }
+  .bars { margin-top: 14px; }
+  .bar-row { display: grid; grid-template-columns: 90px 1fr 52px; gap: 10px; align-items: center; margin-bottom: 7px; font-size: 12.5px; }
+  .bar-row .n { font-family: var(--mono); text-align: right; color: var(--muted); }
+  .bar-track { height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
+  .bar-fill { height: 100%; background: var(--accent); border-radius: 4px; }
+
+  .lot-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+  .lot-cell { text-align: center; cursor: pointer; }
+  .lot-cell canvas { border-radius: 5px; border: 2px solid transparent; width: 100%; }
+  .lot-cell .tag { font-size: 11px; font-family: var(--mono); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lot-cell.clean canvas { border-color: transparent; } .lot-cell.clean .tag { color: var(--muted); }
+  .lot-cell.flag canvas { border-color: var(--fail); } .lot-cell.flag .tag { color: var(--fail); }
+  .lot-cell.review canvas { border-color: var(--warn); } .lot-cell.review .tag { color: var(--warn); }
+
+  .metrics { display: flex; flex-direction: column; gap: 10px; }
+  .metric { background: var(--panel-2); border-radius: 6px; padding: 10px 14px; }
+  .metric .v { font-size: 26px; font-weight: 700; font-family: var(--mono); }
+  .metric .l { font-size: 12px; color: var(--muted); }
+  .metric.m-clean .v { color: var(--good); }
+  .metric.m-flag .v { color: var(--fail); }
+  .metric.m-review .v { color: var(--warn); }
+  .flagged { margin-top: 14px; font-size: 13px; }
+  .flagged li { margin-bottom: 6px; color: var(--muted); }
+  .flagged b { color: var(--ink); }
+
+  #clusterWrap { position: relative; }
+  #clusterTip {
+    position: absolute; pointer-events: none; background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 5px; padding: 5px 9px; font-size: 12px; font-family: var(--mono); display: none; z-index: 2;
+  }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 12px; font-size: 12.5px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+  .legend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+  .spin { color: var(--muted); font-size: 13px; padding: 30px 0; text-align: center; }
+  footer { margin-top: 30px; color: var(--muted); font-size: 12.5px; border-top: 1px solid var(--line); padding-top: 12px; }
+  @media (max-width: 760px) { .lot-grid { grid-template-columns: repeat(3, 1fr); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div>
+      <h1>WAFER MAP TRIAGE <span class="dot">●</span></h1>
+      <div class="sub">CNN reads the fail-die pattern → names the signature → points at a root-cause direction.
+      Demo on the public WM-811K dataset (real production wafer maps); true labels shown for verification.</div>
+    </div>
+    <div class="threshold">
+      review threshold <b id="thVal">0.90</b>
+      <input type="range" id="thSlider" min="0.5" max="0.99" step="0.01" value="0.90">
+    </div>
+  </header>
+
+  <nav>
+    <button data-tab="single" class="active">Single wafer</button>
+    <button data-tab="lot">Lot triage</button>
+    <button data-tab="cluster">Cluster map</button>
+  </nav>
+
+  <!-- Single wafer -->
+  <div class="tab active" id="tab-single">
+    <div class="row">
+      <div class="card">
+        <div style="display:flex; gap:10px; margin-bottom:14px;">
+          <button class="primary" id="sampleBtn">Sample wafer</button>
+          <select id="clsSelect">
+            <option value="">any wafer</option>
+            <option value="any-pattern">any pattern</option>
+          </select>
+        </div>
+        <canvas id="singleCanvas" class="wafer-canvas" width="64" height="64" style="width:320px;height:320px;"></canvas>
+        <div class="caption" id="singleCaption"></div>
+      </div>
+      <div class="card grow" id="singleResult"><div class="spin">sampling…</div></div>
+    </div>
+  </div>
+
+  <!-- Lot triage -->
+  <div class="tab" id="tab-lot">
+    <div class="row">
+      <div class="card grow" style="min-width:420px;">
+        <button class="primary" id="lotBtn" style="margin-bottom:14px;">Triage a new lot</button>
+        <div class="lot-grid" id="lotGrid"></div>
+      </div>
+      <div class="card" style="width:260px;">
+        <div class="metrics" id="lotMetrics"></div>
+        <ul class="flagged" id="lotFlagged"></ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cluster -->
+  <div class="tab" id="tab-cluster">
+    <div class="card">
+      <div class="sub" style="margin-bottom:12px;">Each dot is a wafer, positioned by the CNN's learned embedding (PCA to 2-D).
+      Similar failure patterns land together — a novel signature would appear as its own cluster.
+      Hover to inspect, click to open that wafer in Single view.</div>
+      <div id="clusterWrap">
+        <canvas id="clusterCanvas" width="1040" height="560" style="width:100%;"></canvas>
+        <div id="clusterTip"></div>
+      </div>
+      <div class="legend" id="clusterLegend"></div>
+    </div>
+  </div>
+
+  <footer>
+    Model: 289k-param CNN trained on 173k labeled maps · dataset: WM-811K (Wu et&nbsp;al., IEEE&nbsp;TSM&nbsp;2015)
+    · <a href="https://github.com/Jcona2025/wafer-defect-ml" style="color:var(--accent);">code &amp; analysis</a>
+    · built on public data, no Intel systems involved
+  </footer>
+</div>
+
+<script>
+const DIE = { 48: null, 49: "--pass", 50: "--fail" };   // charCodes '0','1','2'
+const CLASS_COLORS = {
+  "Center": "#e07b6a", "Donut": "#d9a13c", "Edge-Loc": "#a575d6", "Edge-Ring": "#35c3d6",
+  "Loc": "#d66fa6", "Near-full": "#c8563e", "Random": "#8fb54a", "Scratch": "#e8d060", "none": "#55657a"
+};
+let META = null;
+let threshold = 0.90;
+let clusterData = null, clusterPollTimer = null;
+
+const $ = id => document.getElementById(id);
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+function drawWafer(canvas, mapStr) {
+  const ctx = canvas.getContext("2d");
+  const img = ctx.createImageData(64, 64);
+  const pass = [58, 118, 181], fail = [229, 84, 75], empty = [28, 36, 45];
+  for (let i = 0; i < 4096; i++) {
+    const c = mapStr.charCodeAt(i);
+    const rgb = c === 50 ? fail : c === 49 ? pass : empty;
+    img.data.set([...rgb, 255], i * 4);
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+function decision(w) { return w.conf >= threshold ? (w.pred === "none" ? "clean" : "flag") : "review"; }
+
+// --- Single wafer -----------------------------------------------------------
+let currentWafer = null;
+
+function renderSingle(w) {
+  currentWafer = w;
+  drawWafer($("singleCanvas"), w.map);
+  $("singleCaption").textContent = `wafer #${w.idx.toLocaleString()} · true label: ${w.true_label}`;
+  const d = decision(w);
+  const rc = META.root_causes[w.pred];
+  const banner = d === "review"
+    ? `<div class="banner review"><b>${w.pred}?</b> — confidence ${(w.conf*100).toFixed(1)}% below threshold → route to engineer review</div>`
+    : `<div class="banner auto"><b>${w.pred}</b> — confidence ${(w.conf*100).toFixed(1)}% → auto-tag for SPC trending</div>`;
+  const bars = w.probs.map(p => `
+    <div class="bar-row"><span>${p.cls}</span>
+      <div class="bar-track"><div class="bar-fill" style="width:${(p.p*100).toFixed(1)}%"></div></div>
+      <span class="n">${(p.p*100).toFixed(1)}%</span></div>`).join("");
+  $("singleResult").innerHTML = `${banner}
+    <div class="kv"><span class="k">Root-cause direction</span>${rc.direction}</div>
+    <div class="kv"><span class="k">First checks</span>${rc.first_checks}</div>
+    <div class="bars"><span class="k" style="color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Class probabilities</span>${bars}</div>`;
+}
+
+async function sampleWafer(idx) {
+  $("sampleBtn").disabled = true;
+  const url = idx != null ? `/api/wafer/${idx}` : `/api/wafer?cls=${$("clsSelect").value}`;
+  const w = await (await fetch(url)).json();
+  renderSingle(w);
+  $("sampleBtn").disabled = false;
+}
+
+// --- Lot triage -------------------------------------------------------------
+let currentLot = null;
+
+function renderLot() {
+  if (!currentLot) return;
+  const grid = $("lotGrid");
+  grid.innerHTML = "";
+  let counts = { clean: 0, flag: 0, review: 0 };
+  const flagged = [];
+  for (const w of currentLot) {
+    const d = decision(w);
+    counts[d]++;
+    if (d === "flag") flagged.push(w);
+    const cell = document.createElement("div");
+    cell.className = `lot-cell ${d}`;
+    const cv = document.createElement("canvas");
+    cv.width = 64; cv.height = 64; cv.className = "wafer-canvas";
+    drawWafer(cv, w.map);
+    const tag = document.createElement("div");
+    tag.className = "tag";
+    tag.textContent = d === "clean" ? "clean" : d === "flag" ? w.pred : `review (${w.pred}?)`;
+    cell.append(cv, tag);
+    cell.onclick = () => { switchTab("single"); sampleWafer(w.idx); };
+    cell.title = `wafer #${w.idx.toLocaleString()} — click to inspect`;
+    grid.appendChild(cell);
+  }
+  $("lotMetrics").innerHTML = `
+    <div class="metric m-clean"><div class="v">${counts.clean}</div><div class="l">auto-cleared clean</div></div>
+    <div class="metric m-flag"><div class="v">${counts.flag}</div><div class="l">signatures flagged</div></div>
+    <div class="metric m-review"><div class="v">${counts.review}</div><div class="l">sent to review</div></div>`;
+  $("lotFlagged").innerHTML = flagged.map(w =>
+    `<li><b>${w.pred}</b> (${(w.conf*100).toFixed(0)}%) — ${META.root_causes[w.pred].direction}</li>`).join("");
+}
+
+async function triageLot() {
+  $("lotBtn").disabled = true;
+  $("lotGrid").innerHTML = `<div class="spin" style="grid-column:1/-1;">classifying 25 wafers…</div>`;
+  const r = await (await fetch("/api/lot")).json();
+  currentLot = r.wafers;
+  renderLot();
+  $("lotBtn").disabled = false;
+}
+
+// --- Cluster ----------------------------------------------------------------
+function renderCluster() {
+  const cv = $("clusterCanvas"), ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  if (!clusterData || !clusterData.ready) {
+    ctx.fillStyle = css("--muted"); ctx.font = "14px sans-serif";
+    ctx.fillText("computing embedding…", cv.width / 2 - 70, cv.height / 2);
+    return;
+  }
+  const pad = 24, W = cv.width - 2 * pad, H = cv.height - 2 * pad;
+  for (const [x, y, p] of clusterData.points) {
+    ctx.fillStyle = CLASS_COLORS[META.classes[p]];
+    ctx.globalAlpha = META.classes[p] === "none" ? 0.35 : 0.8;
+    ctx.beginPath();
+    ctx.arc(pad + x * W, pad + (1 - y) * H, 3, 0, 6.283);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  $("clusterLegend").innerHTML = META.classes.map(c =>
+    `<span><i style="background:${CLASS_COLORS[c]}"></i>${c}</span>`).join("");
+}
+
+async function pollCluster() {
+  clusterData = await (await fetch("/api/cluster")).json();
+  renderCluster();
+  if (!clusterData.ready) clusterPollTimer = setTimeout(pollCluster, 2500);
+}
+
+function nearestPoint(mx, my) {
+  const cv = $("clusterCanvas"), rect = cv.getBoundingClientRect();
+  const scale = cv.width / rect.width, pad = 24, W = cv.width - 2 * pad, H = cv.height - 2 * pad;
+  const cx = (mx - rect.left) * scale, cy = (my - rect.top) * scale;
+  let best = null, bd = 144; // 12px radius
+  for (const pt of clusterData?.points || []) {
+    const dx = pad + pt[0] * W - cx, dy = pad + (1 - pt[1]) * H - cy;
+    const d = dx * dx + dy * dy;
+    if (d < bd) { bd = d; best = pt; }
+  }
+  return best;
+}
+
+$("clusterCanvas").addEventListener("mousemove", e => {
+  const tip = $("clusterTip"), pt = clusterData?.ready && nearestPoint(e.clientX, e.clientY);
+  if (pt) {
+    tip.style.display = "block";
+    const wrapRect = $("clusterWrap").getBoundingClientRect();
+    tip.style.left = (e.clientX - wrapRect.left + 12) + "px";
+    tip.style.top = (e.clientY - wrapRect.top - 10) + "px";
+    tip.textContent = `${META.classes[pt[2]]} · #${pt[3].toLocaleString()}`;
+    $("clusterCanvas").style.cursor = "pointer";
+  } else {
+    tip.style.display = "none";
+    $("clusterCanvas").style.cursor = "default";
+  }
+});
+$("clusterCanvas").addEventListener("click", e => {
+  const pt = clusterData?.ready && nearestPoint(e.clientX, e.clientY);
+  if (pt) { switchTab("single"); sampleWafer(pt[3]); }
+});
+
+// --- shell ------------------------------------------------------------------
+function switchTab(name) {
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.id === "tab-" + name));
+  if (name === "cluster" && !clusterData?.ready && !clusterPollTimer) pollCluster();
+}
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => switchTab(b.dataset.tab));
+
+$("thSlider").oninput = e => {
+  threshold = parseFloat(e.target.value);
+  $("thVal").textContent = threshold.toFixed(2);
+  if (currentWafer) renderSingle(currentWafer);
+  renderLot();
+};
+$("sampleBtn").onclick = () => sampleWafer();
+$("lotBtn").onclick = triageLot;
+
+(async function init() {
+  META = await (await fetch("/api/meta")).json();
+  for (const c of META.classes) {
+    if (c === "none") continue;
+    const o = document.createElement("option");
+    o.value = c; o.textContent = c;
+    $("clsSelect").appendChild(o);
+  }
+  await sampleWafer();
+  triageLot();
+})();
+</script>
+</body>
+</html>

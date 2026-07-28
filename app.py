@@ -1,182 +1,145 @@
-"""Wafer map triage tool — classify signatures, diagnose root-cause direction.
+"""Wafer Map Triage — Flask app.
 
-Run:  streamlit run app.py
-Requires data/processed/labeled.npz and models/wafer_cnn.pt (see README).
+Run:  python app.py            (dev, http://localhost:8601)
+      gunicorn -w 1 -b 127.0.0.1:8601 app:app   (production)
+
+Requires models/wafer_cnn.pt and either data/processed/labeled.npz (full)
+or the bundled data/demo_sample.npz.
 """
 
+import threading
+
 import numpy as np
-import streamlit as st
 import torch
-import matplotlib.pyplot as plt
-from matplotlib.colors import ListedColormap
+from flask import Flask, jsonify, render_template, request
 
 from src import data
 from src.diagnosis import ROOT_CAUSES
 from src.models import WaferCNN, maps_to_tensor
 
-WAFER_CMAP = ListedColormap(["#f0f0f0", "#4c9be8", "#e8554c"])
-
-st.set_page_config(page_title="Wafer Map Triage", page_icon="🎯", layout="wide")
-
-
-@st.cache_resource
-def load_model():
-    model = WaferCNN(n_classes=len(data.CLASSES))
-    model.load_state_dict(torch.load("models/wafer_cnn.pt", map_location="cpu", weights_only=True))
-    return model.eval()
+app = Flask(__name__)
+torch.set_num_threads(2)
 
 
-@st.cache_data
-def load_maps():
-    """Full labeled set locally; falls back to the bundled demo subset on servers."""
+def _load_maps():
     path = data.PROCESSED if data.PROCESSED.exists() else data.DATA_DIR / "demo_sample.npz"
     npz = np.load(path)
     return npz["X"], npz["y"]
 
 
-def predict(model, maps: np.ndarray) -> np.ndarray:
-    """(N, 64, 64) -> (N, 9) class probabilities."""
+X, Y = _load_maps()
+MODEL = WaferCNN(n_classes=len(data.CLASSES))
+MODEL.load_state_dict(torch.load("models/wafer_cnn.pt", map_location="cpu", weights_only=True))
+MODEL.eval()
+RNG = np.random.default_rng()
+NONE_IDX = data.CLASSES.index("none")
+
+
+def predict(maps: np.ndarray) -> np.ndarray:
     with torch.no_grad():
-        return torch.softmax(model(maps_to_tensor(maps)), dim=1).numpy()
+        return torch.softmax(MODEL(maps_to_tensor(maps)), dim=1).numpy()
 
 
-def draw_map(wafer_map, ax, title=None, title_color=None):
-    ax.imshow(wafer_map, cmap=WAFER_CMAP, vmin=0, vmax=2, interpolation="nearest")
-    if title:
-        ax.set_title(title, fontsize=9, color=title_color or "black")
-    ax.axis("off")
+def encode_map(m: np.ndarray) -> str:
+    """(64, 64) of {0,1,2} -> 4096-char string of '0'/'1'/'2' for compact JSON."""
+    return (m.ravel() + 48).astype(np.uint8).tobytes().decode("ascii")
 
 
-model = load_model()
-X, y = load_maps()
-rng = np.random.default_rng()
-
-st.title("Wafer Map Triage")
-st.caption(
-    "Model reads the fail-die pattern → names the signature → points at a root-cause direction. "
-    "Demo runs on the public WM-811K dataset (811k production wafer maps); true labels shown for verification."
-)
-
-threshold = st.sidebar.slider(
-    "Review threshold", 0.5, 0.99, 0.90, 0.01,
-    help="Below this confidence the wafer is routed to engineer review instead of auto-tagged.",
-)
-tab_single, tab_lot, tab_cluster = st.tabs(["Single wafer", "Lot triage", "Cluster view"])
+def wafer_payload(idx: int, probs: np.ndarray) -> dict:
+    order = np.argsort(probs)[::-1]
+    return {
+        "idx": int(idx),
+        "map": encode_map(X[idx]),
+        "true_label": data.CLASSES[Y[idx]],
+        "pred": data.CLASSES[order[0]],
+        "conf": round(float(probs[order[0]]), 4),
+        "probs": [
+            {"cls": data.CLASSES[i], "p": round(float(probs[i]), 4)} for i in order[:4]
+        ],
+    }
 
 
-# --- Single wafer -----------------------------------------------------------
-with tab_single:
-    left, right = st.columns([1, 1.4])
-    with left:
-        if st.button("Sample a wafer", type="primary") or "single_idx" not in st.session_state:
-            st.session_state.single_idx = int(rng.integers(0, len(X)))
-        idx = st.session_state.single_idx
-        fig, ax = plt.subplots(figsize=(3.2, 3.2))
-        draw_map(X[idx], ax)
-        st.pyplot(fig, width="content")
-        st.caption(f"Wafer #{idx:,} — true label: **{data.CLASSES[y[idx]]}**")
-
-    with right:
-        probs = predict(model, X[idx][None])[0]
-        top = int(probs.argmax())
-        cls, conf = data.CLASSES[top], float(probs[top])
-
-        if conf >= threshold:
-            st.success(f"**{cls}** — confidence {conf:.1%} → auto-tag for SPC trending")
-        else:
-            st.warning(f"**{cls}?** — confidence {conf:.1%} below threshold → route to engineer review")
-
-        info = ROOT_CAUSES[cls]
-        st.markdown(f"**Root-cause direction:** {info['direction']}")
-        st.markdown(f"**First checks:** {info['first_checks']}")
-
-        order = np.argsort(probs)[::-1][:4]
-        st.markdown("**Class probabilities**")
-        for i in order:
-            st.progress(float(probs[i]), text=f"{data.CLASSES[i]} — {probs[i]:.1%}")
+# --- cluster embedding: computed once in the background at startup ----------
+CLUSTER: dict = {"ready": False}
 
 
-# --- Lot triage -------------------------------------------------------------
-with tab_lot:
-    st.markdown(
-        "Simulates a lot landing at sort: 25 wafers classified in one pass. "
-        "Green = auto-tagged clean, red = signature detected, orange = needs human review."
-    )
-    if st.button("Triage a new lot", type="primary") or "lot_idx" not in st.session_state:
-        st.session_state.lot_idx = rng.integers(0, len(X), size=25)
-    lot = st.session_state.lot_idx
-    probs = predict(model, X[lot])
-    preds, confs = probs.argmax(1), probs.max(1)
+def _compute_cluster(n_sample: int = 2500):
+    pattern = np.flatnonzero(Y != NONE_IDX)
+    clean = np.flatnonzero(Y == NONE_IDX)
+    take = RNG.permutation(np.concatenate([
+        RNG.choice(pattern, size=min(n_sample // 2, len(pattern)), replace=False),
+        RNG.choice(clean, size=n_sample // 2, replace=False),
+    ]))
+    embs = []
+    with torch.no_grad():
+        for start in range(0, len(take), 256):
+            batch = maps_to_tensor(X[take[start:start + 256]])
+            embs.append(MODEL.features(batch).mean(dim=(2, 3)))
+    emb = torch.cat(embs).numpy()
 
-    grid_col, sum_col = st.columns([1.6, 1])
-    with grid_col:
-        fig, axes = plt.subplots(5, 5, figsize=(7.5, 8))
-        none_idx = data.CLASSES.index("none")
-        for ax, i, p, c in zip(axes.ravel(), lot, preds, confs):
-            if c < threshold:
-                color, label = "#b47607", f"review ({data.CLASSES[p]}?)"
-            elif p == none_idx:
-                color, label = "#2b8a3e", "clean"
-            else:
-                color, label = "#c92a2a", data.CLASSES[p]
-            draw_map(X[i], ax, title=label, title_color=color)
-        fig.tight_layout()
-        st.pyplot(fig, width="stretch")
-
-    with sum_col:
-        st.markdown("**Lot summary**")
-        auto = confs >= threshold
-        n_clean = int(((preds == none_idx) & auto).sum())
-        n_review = int((~auto).sum())
-        n_flag = 25 - n_clean - n_review
-        st.metric("Auto-cleared clean", n_clean)
-        st.metric("Signatures flagged", n_flag)
-        st.metric("Sent to review", n_review)
-        if n_flag:
-            st.markdown("**Flagged signatures**")
-            for i, p, c in zip(lot, preds, confs):
-                if c >= threshold and p != none_idx:
-                    st.markdown(
-                        f"- Wafer #{i:,}: **{data.CLASSES[p]}** ({c:.0%}) → {ROOT_CAUSES[data.CLASSES[p]]['direction']}"
-                    )
-
-
-# --- Cluster view -----------------------------------------------------------
-with tab_cluster:
-    st.markdown(
-        "The CNN's learned embedding, projected to 2-D (PCA). Wafers with similar failure patterns land together — "
-        "useful for spotting **new** signatures that don't fit the known classes: they show up as their own cluster."
-    )
-    n_sample = st.select_slider("Wafers to embed", [500, 1000, 2000, 4000], value=2000)
-    if st.button("Compute clusters", type="primary") or "cluster_idx" not in st.session_state:
-        # oversample patterned wafers so the view isn't 85% "none"
-        pattern = np.flatnonzero(y != data.CLASSES.index("none"))
-        clean = np.flatnonzero(y == data.CLASSES.index("none"))
-        take = rng.permutation(np.concatenate([
-            rng.choice(pattern, size=min(n_sample // 2, len(pattern)), replace=False),
-            rng.choice(clean, size=n_sample // 2, replace=False),
-        ]))
-        st.session_state.cluster_idx = take
-    take = st.session_state.cluster_idx
-
-    with st.spinner("Embedding wafers..."):
-        with torch.no_grad():
-            emb = []
-            for start in range(0, len(take), 512):
-                batch = maps_to_tensor(X[take[start:start + 512]])
-                emb.append(model.features(batch).mean(dim=(2, 3)))
-            emb = torch.cat(emb).numpy()
     from sklearn.decomposition import PCA
     xy = PCA(n_components=2).fit_transform(emb)
+    xy = (xy - xy.min(0)) / (xy.max(0) - xy.min(0))  # normalize to [0,1] for canvas
+    preds = predict(X[take]).argmax(1)
+    CLUSTER.update({
+        "ready": True,
+        "points": [
+            [round(float(px), 4), round(float(py), 4), int(p), int(i)]
+            for (px, py), p, i in zip(xy, preds, take)
+        ],
+    })
 
-    preds = predict(model, X[take]).argmax(1)
-    fig, ax = plt.subplots(figsize=(8, 5.5))
-    palette = plt.get_cmap("tab10")
-    for c, cls in enumerate(data.CLASSES):
-        mask = preds == c
-        if mask.any():
-            ax.scatter(xy[mask, 0], xy[mask, 1], s=8, alpha=0.6, color=palette(c % 10), label=cls)
-    ax.legend(markerscale=2, fontsize=8, loc="best", ncols=2)
-    ax.set_xticks([]); ax.set_yticks([])
-    ax.set_title("CNN embedding of wafer maps (PCA, colored by predicted signature)", fontsize=10)
-    st.pyplot(fig, width="stretch")
+
+threading.Thread(target=_compute_cluster, daemon=True).start()
+
+
+# --- routes -----------------------------------------------------------------
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+
+@app.route("/api/meta")
+def meta():
+    return jsonify({
+        "classes": data.CLASSES,
+        "root_causes": ROOT_CAUSES,
+        "n_wafers": len(Y),
+    })
+
+
+@app.route("/api/wafer")
+def wafer():
+    cls = request.args.get("cls", "")
+    if cls in data.CLASSES:
+        idx = int(RNG.choice(np.flatnonzero(Y == data.CLASSES.index(cls))))
+    elif cls == "any-pattern":
+        idx = int(RNG.choice(np.flatnonzero(Y != NONE_IDX)))
+    else:
+        idx = int(RNG.integers(0, len(Y)))
+    probs = predict(X[idx][None])[0]
+    return jsonify(wafer_payload(idx, probs))
+
+
+@app.route("/api/wafer/<int:idx>")
+def wafer_by_idx(idx):
+    if not 0 <= idx < len(Y):
+        return jsonify({"error": "index out of range"}), 404
+    probs = predict(X[idx][None])[0]
+    return jsonify(wafer_payload(idx, probs))
+
+
+@app.route("/api/lot")
+def lot():
+    idxs = RNG.integers(0, len(Y), size=25)
+    probs = predict(X[idxs])
+    return jsonify({"wafers": [wafer_payload(i, p) for i, p in zip(idxs, probs)]})
+
+
+@app.route("/api/cluster")
+def cluster():
+    return jsonify(CLUSTER)
+
+
+if __name__ == "__main__":
+    app.run(host="127.0.0.1", port=8601, debug=False)

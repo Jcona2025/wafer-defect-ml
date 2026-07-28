@@ -5,7 +5,3 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:8501:8501"
-    # Serving under a subpath (e.g. baselinetech.ie/wafer)? Uncomment:
-    # command: >
-    #   streamlit run app.py --server.headless=true --server.address=0.0.0.0
-    #   --server.port=8501 --server.baseUrlPath=/wafer

@@ -8,12 +8,16 @@ every wafer.
 
 ## Run it
 
+Live demo: **https://wafer.baselinetech.ie**
+
 ```bash
-docker compose -f deploy/docker-compose.yml up -d   # then open :8501
+pip install -r requirements-app.txt
+python app.py            # dev — http://localhost:8601
 ```
 
-or locally: `pip install -r requirements-app.txt && streamlit run app.py`
-(a demo dataset and trained model ship in the repo — no setup needed).
+Flask API + vanilla-JS frontend (canvas-rendered maps, no framework). A demo
+dataset and the trained model ship in the repo — no setup needed. Production:
+`gunicorn -w 1 -b 127.0.0.1:8601 app:app`, or the Dockerfile.
 
 Three views: **Single wafer** (classify + diagnose one map), **Lot triage**
 (25 wafers in one pass — auto-clear clean, flag signatures, queue ambiguous ones

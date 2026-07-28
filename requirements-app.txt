@@ -3,5 +3,6 @@ pandas
 matplotlib
 scikit-learn
 scipy
-streamlit
+flask
+gunicorn
 torch
