@@ -71,7 +71,8 @@ def _geometry_stats(wafer_map: np.ndarray) -> list[float]:
     labels, n_regions = ndimage.label(fails)
     sizes = ndimage.sum_labels(fails, labels, index=range(1, n_regions + 1))
     largest = int(sizes.max())
-    slc = ndimage.find_objects(labels == np.argmax(sizes) + 1)[0]
+    largest_label = int(np.argmax(sizes)) + 1
+    slc = ndimage.find_objects(labels, max_label=largest_label)[largest_label - 1]
     bbox_h, bbox_w = slc[0].stop - slc[0].start, slc[1].stop - slc[1].start
     aspect = max(bbox_h, bbox_w) / max(1, min(bbox_h, bbox_w))
     return [

@@ -16,6 +16,21 @@ def maps_to_tensor(X: np.ndarray) -> torch.Tensor:
     return torch.nn.functional.one_hot(t, num_classes=3).permute(0, 3, 1, 2).float()
 
 
+class WaferDataset(torch.utils.data.Dataset):
+    """Holds maps as uint8 and one-hot encodes per item, keeping RAM use small."""
+
+    def __init__(self, X: np.ndarray, y: np.ndarray):
+        self.X = torch.from_numpy(X)
+        self.y = torch.from_numpy(y)
+
+    def __len__(self):
+        return len(self.y)
+
+    def __getitem__(self, i):
+        x = torch.nn.functional.one_hot(self.X[i].long(), num_classes=3)
+        return x.permute(2, 0, 1).float(), self.y[i]
+
+
 class WaferCNN(nn.Module):
     def __init__(self, n_classes: int = 9):
         super().__init__()
