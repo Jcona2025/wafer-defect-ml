@@ -29,6 +29,20 @@ maps, and variable wafer geometries — the same properties real fab data has.
 4. **Evaluation** — per-class precision/recall and confusion analysis, with
    discussion of which confusions matter in a fab context and which don't
 
+## Results
+
+Test-set performance (9 classes, macro-averaged):
+
+| Model | Test mix | Macro F1 | "none" F1 | Notes |
+|---|---|---|---|---|
+| Engineered features + HistGradientBoosting | "none" capped at 20k | 0.84 | 0.946 | Strong on geometric signatures (Edge-Ring 0.96 F1) |
+| Small CNN (~300k params, class-balanced sampling) | Full production mix (85% "none") | 0.83 | 0.987 | Near-eliminates false alarms at realistic class ratios |
+
+Headline finding: at production class ratios the CNN's value is **false-alarm
+suppression** (0.989 precision on clean wafers) rather than raw accuracy —
+the property that decides whether an auto-classifier saves reviewer time or
+buries engineers in noise. Full analysis in `notebooks/03_cnn.ipynb`.
+
 ## Repo layout
 
 ```
