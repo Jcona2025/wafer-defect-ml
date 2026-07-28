@@ -113,12 +113,13 @@
   <header>
     <div>
       <h1>WAFER MAP TRIAGE <span class="dot">●</span></h1>
-      <div class="sub">CNN reads the fail-die pattern → names the signature → points at a root-cause direction.
-      Demo on the public WM-811K dataset (real production wafer maps); true labels shown for verification.</div>
+      <div class="sub">Classifies the failure pattern on wafer maps and suggests where to start looking.
+      Runs on the public WM-811K dataset (811k maps from a real fab). The true label is shown
+      under each wafer so you can check the model's call against it.</div>
     </div>
-    <div class="threshold" title="How sure the model must be before it acts without a human. Wafers below this confidence are sent to engineer review instead of being auto-tagged.">
-      auto-decide when ≥ <b id="thVal">90%</b> sure<br>
-      <span style="font-size:11px;">less sure → goes to human review</span>
+    <div class="threshold" title="How confident the model has to be before its call is used automatically. Anything below the cutoff is queued for engineer review instead.">
+      auto-decide when ≥ <b id="thVal">90%</b> confident<br>
+      <span style="font-size:11px;">below that, it goes to review</span>
       <input type="range" id="thSlider" min="0.5" max="0.99" step="0.01" value="0.90">
     </div>
   </header>
@@ -126,10 +127,10 @@
   <details class="howit">
     <summary>How it works</summary>
     <ol>
-      <li><b>Input — a wafer map.</b> The pass/fail result for every die on one wafer, straight from test. No images, no sensor data — just the map.</li>
-      <li><b>A neural network names the pattern.</b> Trained on 173,000 engineer-labeled maps, it answers one question: which of 9 known failure signatures does this shape match (edge ring, scratch, center cluster, …) — and how sure is it.</li>
-      <li><b>The pattern points at the cause.</b> Each signature physically constrains what can have produced it — a ring at the edge implicates chamber uniformity, not handling; a thin line implicates handling, not plasma. That signature→cause mapping is built-in engineering knowledge, shown alongside every call. The model finds the pattern; the physics does the diagnosing.</li>
-      <li><b>Sure → automatic, unsure → human.</b> High-confidence calls are auto-cleared or auto-flagged for SPC trending; ambiguous maps are escalated to engineer review. The cutoff is the slider above. The <i>Cluster map</i> tab shows wafers grouped purely by learned similarity — a failure mode that fits none of the 9 categories would appear there as a new cluster.</li>
+      <li>The input is a wafer map: the pass/fail result for each die after test. Nothing else goes in.</li>
+      <li>A CNN trained on 173,000 labeled maps classifies the pattern into one of 9 known signatures (edge ring, scratch, center cluster, etc.) and gives a confidence score.</li>
+      <li>Each signature has a list of usual causes attached. That mapping is written from fab experience, not learned by the model. An edge ring points at chamber uniformity or edge processes; a scratch points at handling. The model only names the pattern.</li>
+      <li>Calls above the confidence cutoff are used automatically. Anything below it is queued for engineer review. The cluster map tab groups wafers by similarity without using labels, so a new failure mode that fits none of the 9 classes would show up there as a separate group.</li>
     </ol>
   </details>
 
@@ -174,9 +175,10 @@
   <!-- Cluster -->
   <div class="tab" id="tab-cluster">
     <div class="card">
-      <div class="sub" style="margin-bottom:12px;">Each dot is a wafer, positioned by the CNN's learned embedding (PCA to 2-D).
-      Similar failure patterns land together — a novel signature would appear as its own cluster.
-      Hover to inspect, click to open that wafer in Single view.</div>
+      <div class="sub" style="margin-bottom:12px;">Each dot is one wafer, placed using the CNN's internal representation (PCA to 2D).
+      Wafers with similar failure patterns sit near each other, without using any labels.
+      If a new failure mode appeared that fits none of the 9 classes, it would form its own group here.
+      Hover to inspect a point, click to open that wafer.</div>
       <div id="clusterWrap">
         <canvas id="clusterCanvas" width="1040" height="560" style="width:100%;"></canvas>
         <div id="clusterTip"></div>
@@ -186,9 +188,8 @@
   </div>
 
   <footer>
-    Model: 289k-param CNN trained on 173k labeled maps · dataset: WM-811K (Wu et&nbsp;al., IEEE&nbsp;TSM&nbsp;2015)
-    · <a href="https://github.com/Jcona2025/wafer-defect-ml" style="color:var(--accent);">code &amp; analysis</a>
-    · built on public data, no Intel systems involved
+    289k-parameter CNN, trained on 173k labeled maps from the WM-811K dataset
+    (Wu et&nbsp;al., IEEE&nbsp;TSM&nbsp;2015). Built entirely on public data.
   </footer>
 </div>
 
@@ -226,8 +227,8 @@ function failRateLine(w) {
   const fr = w.fail_rate, p95 = META.clean_p95;
   const mult = fr / Math.max(p95, 1e-4);
   let note;
-  if (fr <= p95) note = `within the clean-wafer range (95% of clean wafers ≤ ${(p95*100).toFixed(1)}%)`;
-  else note = `<span style="color:var(--warn)">${mult.toFixed(0)}× the clean-wafer ceiling of ${(p95*100).toFixed(1)}%</span>`;
+  if (fr <= p95) note = `normal range (95% of clean wafers stay under ${(p95*100).toFixed(1)}%)`;
+  else note = `<span style="color:var(--warn)">${mult.toFixed(1)}× higher than 95% of clean wafers (${(p95*100).toFixed(1)}%)</span>`;
   return `<div class="kv"><span class="k">Fail density</span>${(fr*100).toFixed(1)}% of die failing — ${note}</div>`;
 }
 
@@ -244,11 +245,11 @@ function renderSingle(w) {
   const d = decision(w);
   const rc = META.root_causes[w.pred];
   const banner = d === "review"
-    ? `<div class="banner review"><b>${w.pred}?</b> — confidence ${(w.conf*100).toFixed(1)}% below threshold → route to engineer review</div>`
-    : `<div class="banner auto"><b>${w.pred}</b> — confidence ${(w.conf*100).toFixed(1)}% → auto-tag for SPC trending</div>`;
+    ? `<div class="banner review"><b>${w.pred}?</b> — only ${(w.conf*100).toFixed(1)}% confident, sent to engineer review</div>`
+    : `<div class="banner auto"><b>${w.pred}</b> — ${(w.conf*100).toFixed(1)}% confident, auto-tagged for SPC trending</div>`;
   const firstChecks = isElevatedRandom(w)
-    ? `<span style="color:var(--warn)">Elevated defectivity with no spatial pattern — a broad-effect problem, not a single tool signature.</span>
-       Check whether the rest of the lot looks the same, pull inline particle monitors, and review incoming material / upstream steps that touch the whole wafer.`
+    ? `<span style="color:var(--warn)">High defectivity but no spatial pattern. This usually isn't one tool.</span>
+       Check if the rest of the lot looks the same, pull the inline particle data, and look at upstream steps that touch the whole wafer.`
     : rc.first_checks;
   const bars = w.probs.map(p => `
     <div class="bar-row"><span>${p.cls}</span>
