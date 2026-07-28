@@ -222,22 +222,42 @@ function decision(w) { return w.conf >= threshold ? (w.pred === "none" ? "clean"
 // --- Single wafer -----------------------------------------------------------
 let currentWafer = null;
 
+function failRateLine(w) {
+  const fr = w.fail_rate, p95 = META.clean_p95;
+  const mult = fr / Math.max(p95, 1e-4);
+  let note;
+  if (fr <= p95) note = `within the clean-wafer range (95% of clean wafers ≤ ${(p95*100).toFixed(1)}%)`;
+  else note = `<span style="color:var(--warn)">${mult.toFixed(0)}× the clean-wafer ceiling of ${(p95*100).toFixed(1)}%</span>`;
+  return `<div class="kv"><span class="k">Fail density</span>${(fr*100).toFixed(1)}% of die failing — ${note}</div>`;
+}
+
+function isElevatedRandom(w) {
+  // beyond what 95% of clean wafers show, with no spatial pattern -> broad-effect problem
+  return w.pred === "Random" && w.fail_rate > META.clean_p95;
+}
+
 function renderSingle(w) {
   currentWafer = w;
   drawWafer($("singleCanvas"), w.map);
-  $("singleCaption").textContent = `wafer #${w.idx.toLocaleString()} · true label: ${w.true_label}`;
+  $("singleCaption").textContent =
+    `wafer #${w.idx.toLocaleString()} · true label: ${w.true_label} · fail rate ${(w.fail_rate*100).toFixed(1)}%`;
   const d = decision(w);
   const rc = META.root_causes[w.pred];
   const banner = d === "review"
     ? `<div class="banner review"><b>${w.pred}?</b> — confidence ${(w.conf*100).toFixed(1)}% below threshold → route to engineer review</div>`
     : `<div class="banner auto"><b>${w.pred}</b> — confidence ${(w.conf*100).toFixed(1)}% → auto-tag for SPC trending</div>`;
+  const firstChecks = isElevatedRandom(w)
+    ? `<span style="color:var(--warn)">Elevated defectivity with no spatial pattern — a broad-effect problem, not a single tool signature.</span>
+       Check whether the rest of the lot looks the same, pull inline particle monitors, and review incoming material / upstream steps that touch the whole wafer.`
+    : rc.first_checks;
   const bars = w.probs.map(p => `
     <div class="bar-row"><span>${p.cls}</span>
       <div class="bar-track"><div class="bar-fill" style="width:${(p.p*100).toFixed(1)}%"></div></div>
       <span class="n">${(p.p*100).toFixed(1)}%</span></div>`).join("");
   $("singleResult").innerHTML = `${banner}
+    ${failRateLine(w)}
     <div class="kv"><span class="k">Root-cause direction</span>${rc.direction}</div>
-    <div class="kv"><span class="k">First checks</span>${rc.first_checks}</div>
+    <div class="kv"><span class="k">First checks</span>${firstChecks}</div>
     <div class="bars"><span class="k" style="color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Class probabilities</span>${bars}</div>`;
 }
 
@@ -280,7 +300,9 @@ function renderLot() {
     <div class="metric m-flag"><div class="v">${counts.flag}</div><div class="l">signatures flagged</div></div>
     <div class="metric m-review"><div class="v">${counts.review}</div><div class="l">sent to review</div></div>`;
   $("lotFlagged").innerHTML = flagged.map(w =>
-    `<li><b>${w.pred}</b> (${(w.conf*100).toFixed(0)}%) — ${META.root_causes[w.pred].direction}</li>`).join("");
+    `<li><b>${w.pred}</b> (${(w.conf*100).toFixed(0)}%, ${(w.fail_rate*100).toFixed(0)}% fail) — ${
+      isElevatedRandom(w) ? "elevated defectivity, broad-effect problem — check the full lot" : META.root_causes[w.pred].direction
+    }</li>`).join("");
 }
 
 async function triageLot() {

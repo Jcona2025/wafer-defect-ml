@@ -34,6 +34,11 @@ MODEL.eval()
 RNG = np.random.default_rng()
 NONE_IDX = data.CLASSES.index("none")
 
+# real per-wafer fail density: failing die / die on wafer, from the map itself
+FAIL_RATE = (X == 2).sum(axis=(1, 2)) / np.maximum((X > 0).sum(axis=(1, 2)), 1)
+# what "clean" actually looks like in this fab: 95th percentile of wafers labeled none
+CLEAN_P95 = float(np.percentile(FAIL_RATE[Y == NONE_IDX], 95))
+
 
 def predict(maps: np.ndarray) -> np.ndarray:
     with torch.no_grad():
@@ -50,6 +55,7 @@ def wafer_payload(idx: int, probs: np.ndarray) -> dict:
     return {
         "idx": int(idx),
         "map": encode_map(X[idx]),
+        "fail_rate": round(float(FAIL_RATE[idx]), 4),
         "true_label": data.CLASSES[Y[idx]],
         "pred": data.CLASSES[order[0]],
         "conf": round(float(probs[order[0]]), 4),
@@ -105,6 +111,7 @@ def meta():
         "classes": data.CLASSES,
         "root_causes": ROOT_CAUSES,
         "n_wafers": len(Y),
+        "clean_p95": round(CLEAN_P95, 4),
     })
 
 
