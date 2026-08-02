@@ -76,17 +76,20 @@ def _compute_cluster(n_sample: int = 2500):
         RNG.choice(pattern, size=min(n_sample // 2, len(pattern)), replace=False),
         RNG.choice(clean, size=n_sample // 2, replace=False),
     ]))
-    embs = []
+    # one batched pass for both embeddings and predictions — a single
+    # 2500-map forward would spike past 1 GB of activations and OOM the box
+    embs, preds = [], []
     with torch.no_grad():
         for start in range(0, len(take), 256):
-            batch = maps_to_tensor(X[take[start:start + 256]])
-            embs.append(MODEL.features(batch).mean(dim=(2, 3)))
+            feats = MODEL.features(maps_to_tensor(X[take[start:start + 256]]))
+            embs.append(feats.mean(dim=(2, 3)))
+            preds.append(MODEL.head(feats).argmax(1))
     emb = torch.cat(embs).numpy()
+    preds = torch.cat(preds).numpy()
 
     from sklearn.decomposition import PCA
     xy = PCA(n_components=2).fit_transform(emb)
     xy = (xy - xy.min(0)) / (xy.max(0) - xy.min(0))  # normalize to [0,1] for canvas
-    preds = predict(X[take]).argmax(1)
     CLUSTER.update({
         "ready": True,
         "points": [
