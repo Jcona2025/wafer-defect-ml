@@ -49,10 +49,10 @@ Held-out test set, 34,590 wafers at true production class mix:
 
 | | Baseline | CNN |
 |---|---|---|
-| Macro F1 (9 classes) | 0.84¹ | **0.83** |
-| Clean-wafer precision ("none") | 0.973 | **0.989** |
+| Macro F1 (9 classes) | 0.84¹ | **0.86** |
+| Clean-wafer precision ("none") | 0.973 | **0.988** |
 | Edge-Ring F1 | 0.960 | **0.972** |
-| Scratch precision | 0.509 | **0.743** |
+| Scratch precision | 0.509 | **0.799** |
 
 ¹ baseline tested with the clean class capped; the CNN faces the full 85%-clean mix.
 
@@ -63,5 +63,6 @@ models are small diffuse clusters (Loc) and faint scratches — genuinely ambigu
 at map resolution; the tool routes low-confidence wafers to human review instead
 of guessing.
 
-Full analysis: `notebooks/00_technical_summary.ipynb` (condensed, executed) and
-`01`–`03` (EDA → baseline → CNN).
+Full walkthrough of the CNN — data, training curves, test results:
+[`notebooks/03_supervised_cnn.ipynb`](notebooks/03_supervised_cnn.ipynb).
+EDA and the feature baseline are in `01_eda` and `02_baseline`.
