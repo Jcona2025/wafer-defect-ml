@@ -43,6 +43,10 @@ compared deliberately:
 - **CNN** — 3 conv blocks, 289k parameters, trained with class-balanced sampling
   so rare signatures aren't drowned out by the 85% clean majority.
 
+How the pieces fit together:
+
+![Project map](reports/figures/project_flow.png)
+
 ## Results
 
 Held-out test set, 34,590 wafers at true production class mix:
